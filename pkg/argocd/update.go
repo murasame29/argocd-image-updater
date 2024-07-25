@@ -128,11 +128,15 @@ func (state *SyncIterationState) IsLockedCredentials(creds string) bool {
 
 // LockCredentials is a function that prevents the same shell script from being executed simultaneously
 func (state *SyncIterationState) LockCredentials(creds string) {
+	state.lock.Lock()
+	defer state.lock.Unlock()
 	state.credentialLocks[creds] = struct{}{}
 }
 
 // UnlockCredentials unlocks the running shell script when it finishes
 func (state *SyncIterationState) UnlockCredentials(creds string) {
+	state.lock.Lock()
+	defer state.lock.Unlock()
 	delete(state.credentialLocks, creds)
 }
 
