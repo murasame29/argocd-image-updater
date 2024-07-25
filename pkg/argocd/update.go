@@ -109,13 +109,31 @@ type ChangeEntry struct {
 type SyncIterationState struct {
 	lock            sync.Mutex
 	repositoryLocks map[string]*sync.Mutex
+	credentialLocks map[string]struct{}
 }
 
 // NewSyncIterationState returns a new instance of SyncIterationState
 func NewSyncIterationState() *SyncIterationState {
 	return &SyncIterationState{
 		repositoryLocks: make(map[string]*sync.Mutex),
+		credentialLocks: make(map[string]struct{}),
 	}
+}
+
+// IsLockedCredentials checks if a script is already running
+func (state *SyncIterationState) IsLockedCredentials(creds string) bool {
+	_, exists := state.credentialLocks[creds]
+	return exists
+}
+
+// LockCredentials is a function that prevents the same shell script from being executed simultaneously
+func (state *SyncIterationState) LockCredentials(creds string) {
+	state.credentialLocks[creds] = struct{}{}
+}
+
+// UnlockCredentials unlocks the running shell script when it finishes
+func (state *SyncIterationState) UnlockCredentials(creds string) {
+	delete(state.credentialLocks, creds)
 }
 
 // GetRepositoryLock returns the lock for a specified repository
@@ -230,13 +248,24 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 
 		imgCredSrc := applicationImage.GetParameterPullSecret(updateConf.UpdateApp.Application.Annotations)
 		var creds *image.Credential = &image.Credential{}
+
 		if imgCredSrc != nil {
+			if state.IsLockedCredentials(imgCredSrc.ScriptPath) {
+				imgCtx.Infof("Credentials are locked by another process, skipping: %s", imgCredSrc.ScriptPath)
+				result.NumSkipped += 1
+				continue
+			}
+
+			state.LockCredentials(imgCredSrc.ScriptPath)
+
 			creds, err = imgCredSrc.FetchCredentials(rep.RegistryAPI, updateConf.KubeClient)
 			if err != nil {
 				imgCtx.Warnf("Could not fetch credentials: %v", err)
 				result.NumErrors += 1
 				continue
 			}
+
+			state.UnlockCredentials(imgCredSrc.ScriptPath)
 		}
 
 		regClient, err := updateConf.NewRegFN(rep, creds.Username, creds.Password)
